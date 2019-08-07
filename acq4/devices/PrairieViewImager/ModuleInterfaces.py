@@ -31,7 +31,8 @@ class PVImagerCamModInterface(CameraModuleInterface):
         self.imagingCtrl.ui.acquireVideoBtn.setEnabled(False)
 
         self.zStackCtrl = ZStackCtrl(interface=self)
-
+        cameraModule.window().sigSequenceFinished.connect(self.newZStack)
+        self.zStackCtrl.ui.acquireZStackBtn.setEnabled(False)
 
         # ## set up item groups
         # self.cameraItemGroup = pg.ItemGroup()  ## translated with scope, scaled with camera objective
@@ -50,13 +51,13 @@ class PVImagerCamModInterface(CameraModuleInterface):
 
         self.imagingCtrl.sigAcquireFrameClicked.connect(self.acquireFrameClicked)
         self.frameDisplay.imageUpdated.connect(self.imageUpdated)
-        self.zStackCtrl.ui.acquireZStackBtn.clicked.connect(self.acquireZStackClicked)
+        # self.zStackCtrl.ui.acquireZStackBtn.clicked.connect(self.acquireZStackClicked)
 
 
-    def graphicsItems(self):
-        """Return a list of all graphics items displayed by this interface.
-        """
-        raise NotImplementedError()
+    # def graphicsItems(self):
+    #     """Return a list of all graphics items displayed by this interface.
+    #     """
+    #     pass
 
     def controlWidget(self):
         """Return a widget to be docked in the camera module window.
@@ -68,7 +69,7 @@ class PVImagerCamModInterface(CameraModuleInterface):
     def boundingRect(self):
         """Return the bounding rectangle of all graphics items.
         """
-        raise NotImplementedError()
+        return None
 
     def getImageItem(self):
         """Return the ImageItem used to display imaging data from this device.
@@ -87,21 +88,24 @@ class PVImagerCamModInterface(CameraModuleInterface):
         # Note: this is a bit kludgy. 
         # Would be nice to have a more natural way of handling this..
         #raise NotImplementedError(str(self))
-        return self.getDevice().acquireFrames(1, stack=False)
+        frame = self.getDevice().acquireFrames(1, stack=False)
+        self.imagingCtrl.newFrame(frame)
+        #raise Exception('stop')
+        return frame
 
     def setAcquireBtn(self, b):
         btn = self.imagingCtrl.ui.acquireFrameBtn
-        zBtn = self.zStackCtrl.ui.acquireZStackBtn
+        # zBtn = self.zStackCtrl.ui.acquireZStackBtn
         if b:
             btn.setText('Acquire Frame')
             btn.setEnabled(True)
-            zBtn.setText('Acquire Z-Stack')
-            zBtn.setEnabled(True)
+            # zBtn.setText('Acquire Z-Stack')
+            # zBtn.setEnabled(True)
         else:
             btn.setText('Acquiring...')
             btn.setEnabled(False)
-            zBtn.setText('Acquiring...')
-            zBtn.setEnabled(False)
+            # zBtn.setText('Acquiring...')
+            # zBtn.setEnabled(False)
 
     def acquireFrameClicked(self):
         self.setAcquireBtn(False)
@@ -109,17 +113,22 @@ class PVImagerCamModInterface(CameraModuleInterface):
         self.setAcquireBtn(True)
         self.imagingCtrl.newFrame(frame)
 
-    def acquireZStackClicked(self):
-        self.setAcquireBtn(False)
-        zstack = self.getDevice().acquireZStack()
-        self.setAcquireBtn(True)
-        self.zStackCtrl.newFrame(zstack)
+    # def acquireZStackClicked(self):
+    #     self.setAcquireBtn(False)
+    #     zstack = self.getDevice().acquireZStack()
+    #     self.setAcquireBtn(True)
+    #     self.zStackCtrl.newFrame(zstack)
 
     def imageUpdated(self, frame):
         ## New image is displayed; update image transform
         self.lastFrame = frame
         self.imageItem.setTransform(frame.globalTransform().as2D())
         self.sigNewFrame.emit(self, frame)
+
+    def newZStack(self, dh):
+        #arr = fh[fh.ls()[0]].read()
+        #raise Exception('stop')
+        self.zStackCtrl.newFrame(dh)
 
 
 
@@ -139,26 +148,29 @@ class ZStackCtrl(Qt.QWidget):
 
         self.setUpFocusShortCuts()
         
-    def newFrame(self, stack):
-        treeItem = QtGui.QTreeWidgetItem([stack.info()['name']])
+    def newFrame(self, dh):
+        fh = dh['image_000.ma']
+        arr = fh.read()
+
+        treeItem = QtGui.QTreeWidgetItem([dh.shortName()])
         self.ui.zStackTree.addTopLevelItem(treeItem)
 
-        im = pg.ImageItem(stack.data()[0])
+        im = pg.ImageItem(arr[0])
         self.interface.view.addItem(im)
-        im.setTransform(stack.info()['transform'].as2D())
+        im.setTransform(fh.info()['transform'].as2D())
 
-        self.zStacks[treeItem] ={'data':stack, 'imageItem':im}
+        self.zStacks[treeItem] ={'data':arr, 'imageItem':im}
 
         self.ui.zStackTree.setCurrentItem(treeItem)
 
-        self.saveZStack(stack)
+        #self.saveZStack(stack)
 
 
     def focusSliderChanged(self):
         i = self.ui.focusSlider.value()
 
         treeItem = self.ui.zStackTree.currentItem()
-        data = self.zStacks[treeItem]['data'].data()[i]
+        data = self.zStacks[treeItem]['data'][i]
         self.zStacks[treeItem]['imageItem'].setImage(data)
 
         z = data.infoCopy()[-1]['values']
@@ -167,7 +179,7 @@ class ZStackCtrl(Qt.QWidget):
     def selectedZStackChanged(self):
         treeItem = self.ui.zStackTree.currentItem()
 
-        stack = self.zStacks[treeItem]['data'].data()
+        stack = self.zStacks[treeItem]['data']
         nFrames = stack.shape[0]
         self.ui.focusSlider.setRange(0, nFrames-1)
 
