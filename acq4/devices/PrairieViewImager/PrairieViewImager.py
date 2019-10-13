@@ -13,6 +13,7 @@ from ModuleInterfaces import PVImagerCamModInterface
 from acq4.pyqtgraph import SRTTransform3D, Point
 import deviceTemplate
 from acq4.util.DataManager import getDirHandle
+from ModuleInterfaces import PVImagerCamModInterface
 
 
 class PrairieViewImager(OptomechDevice, Device):
@@ -44,8 +45,19 @@ class PrairieViewImager(OptomechDevice, Device):
         self._zSeriesIDcounter = 0
         self.scale = 1e-6
 
+        deviceManager.declareInterface(name, ['camera'], self)
+
     def scopeDevice(self):
         return self._scopeDev
+
+    def cameraModuleInterface(self, mod):
+        return PVImagerCamModInterface(self, mod)
+
+    def isRunning(self):
+        return False
+
+    def stop(self):
+        pass
 
     def setup(self):
         """Tell Prairie where to save images so acq4 can find them. This should be called

@@ -22,6 +22,7 @@ class CameraWindow(Qt.QMainWindow):
     
     sigInterfaceAdded = Qt.Signal(object, object)
     sigInterfaceRemoved = Qt.Signal(object, object)
+    sigSequenceFinished = Qt.Signal(object) #dirhandle
 
     def __init__(self, module):
         self.hasQuit = False
@@ -87,6 +88,7 @@ class CameraWindow(Qt.QMainWindow):
         self.sequencerWidget = ImageSequencer(self)
         self.sequencerDock = dockarea.Dock(name='Image Sequencer', widget=self.sequencerWidget, size=(200, 10))
         self.cw.addDock(self.sequencerDock, 'right', self.roiDock)
+        self.sequencerWidget.sigSequenceFinished.connect(self.sequenceFinished)
         
         #grid = pg.GridItem()
         #self.view.addItem(grid)
@@ -127,6 +129,9 @@ class CameraWindow(Qt.QMainWindow):
         self.centerView()
         
         self.gv.scene().sigMouseMoved.connect(self.updateMouse)
+
+    def sequenceFinished(self, dh):
+        self.sigSequenceFinished.emit(dh)
         
     def addInterface(self, name, iface):
         """Display a new user interface in the camera module.
@@ -530,6 +535,8 @@ class ROIPlotter(Qt.QWidget):
 class ImageSequencer(Qt.QWidget):
     """GUI for acquiring z-stacks, timelapse, and mosaic.
     """
+    sigSequenceFinished = Qt.Signal(object) #dirhandle
+
     def __init__(self, mod):
         self.mod = weakref.ref(mod)
         Qt.QWidget.__init__(self)
@@ -548,6 +555,7 @@ class ImageSequencer(Qt.QWidget):
         self.ui.statusLabel.setText("[ stopped ]")
 
         self.thread = SequencerThread()
+        self.thread.sigSequenceFinished.connect(self.sequenceFinished)
 
         self.state = pg.WidgetGroup(self)
         self.state.sigChanged.connect(self.stateChanged)
@@ -559,6 +567,9 @@ class ImageSequencer(Qt.QWidget):
         self.ui.pauseBtn.clicked.connect(self.pauseClicked)
         self.ui.setStartBtn.clicked.connect(self.setStartClicked)
         self.ui.setEndBtn.clicked.connect(self.setEndClicked)
+
+    def sequenceFinished(self, dh):
+        self.sigSequenceFinished.emit(dh)
 
     def updateDeviceList(self):
         items = ['Select device..']
@@ -692,6 +703,7 @@ class ImageSequencer(Qt.QWidget):
 class SequencerThread(Thread):
 
     sigMessage = Qt.Signal(object)  # message
+    sigSequenceFinished = Qt.Signal(object) #dirhandle
 
     def __init__(self):
         Thread.__init__(self)
@@ -771,6 +783,7 @@ class SequencerThread(Thread):
 
             iter += 1
             if maxIter == 0 or iter >= maxIter:
+                self.sigSequenceFinished.emit(self.lastFileName)
                 break
 
             self.sleep(until=start+interval)
@@ -866,6 +879,8 @@ class SequencerThread(Thread):
             ]
             data = MetaArray(frame.getImage(), info=arrayInfo)
             dh.writeFile(data, name, info=frame.info())
+
+        self.lastFileName = dh
 
     def sleep(self, until):
         # Wait until some event occurs
