@@ -6,6 +6,10 @@ from collections import OrderedDict
 import functools
 from acq4.util.metaarray import *
 import numpy as np
+import acq4.util.units as units
+import re
+from acq4.util.generator.function_parser import StimGeneratorPulseParser ### this calls eval on a string read from a file. So, danger?
+
 
 protocolNames = {
     'IV Curve': ('cciv.*', 'vciv.*'),
@@ -97,6 +101,160 @@ def listSequenceParams(dh):
         return dh.info()['sequenceParams']
     except KeyError:
         raise Exception("Directory '%s' does not appear to be a protocol sequence." % dh.name())
+
+def getStimParams(fh):
+    """Return a list of dicts where each dict describes a square pulse or square pulse train."""
+    protoDir = getParent(fh, 'Protocol')
+    seqDir = getParent(fh, 'ProtocolSequence')
+    dev = fh.shortName().strip('.ma')
+
+    wave = seqDir.info()['devices'][dev].get('waveGeneratorWidget')
+    if wave is None: ### in older data wavegeneratorwidget data can be stored in a variety of places...
+        waves = find_wave_generators(seqDir.info()['devices'][dev])
+        if len(waves) == 1:
+            wave = waves[0]
+        elif len(waves) == 0:
+            raise Exception('No wave generator widget data found for %s' %fh.name())
+        elif len(waves) > 1:
+            raise Exception('%i wave generator widgets found for %s' %(len(waves), fh.name()))
+        else:
+            raise Exception('Something wonky has happened.')
+
+    stims = []
+    if wave['function'] == '': ### no stimulation, return empty list
+        return stims
+
+    elif wave.get('stimuli') is not None: ### don't need to parse function, we used stim parameters
+        for stim in wave['stimuli'].keys():
+            d = {'function_type':wave['stimuli'][stim]['type'], 'name':stim}
+            for param in wave['stimuli'][stim].keys():
+                if param == 'type':
+                    continue
+                if wave['stimuli'][stim][param]['sequence'] == 'off':
+                    d[param] = wave['stimuli'][stim][param]['value']
+                else:
+                    ### look up value from sequence params list
+                    k = (dev, d['name']+'_'+param)
+                    i = protoDir.info()[k]
+                    d[param] = seqDir.info()['sequenceParams'][k][i]
+            stims.append(d)
+
+    else: ### need to parse function string
+        sequenceParams = {k[1]:k[1] for k in seqDir.info()['sequenceParams'].keys()}
+        parser = StimGeneratorPulseParser(namespace=sequenceParams)
+        pulses = parser.parse(wave['function'])
+
+        for i, pulse in enumerate(pulses):
+            d = {}
+            if type(pulse[0]) == type([]):
+                ### this is a pulse train -- 
+                ###    currently neuroanalyis.stimuli.squarePulseTrain requires 
+                ###    evenly spaces pulses, while stimGenerator does not, so let's 
+                ###    just return each pulse in the train as an individual pulse
+                for k, x in enumerate(pulse[0]):
+                    start = x
+                    length = pulse[1][k] if type(pulse[1]) == type([]) else pulse[1]
+                    amp = pulse[2][k] if type(pulse[2]) == type([]) else pulse[2]
+                    pulses.append((start, length, amp))
+            else:
+                for j, param in enumerate(['start', 'length', 'amplitude']):
+                    if type(pulse[j]) == float:
+                        d[param] = pulse[j]
+                    elif type(pulse[j]) == str:
+                        key = (dev, pulse[j])
+                        index = protoDir.info()[key]
+                        d[param] = seqDir.info()['sequenceParams'][key][index]
+                    else:
+                        raise Exception('Not sure what to do with %s value:%s. type:%s' %(param, str(pulse[j]), str(type(pulse[j]))))
+
+                d['name'] = 'pulse'
+                d['function_type'] = 'pulse'
+                stims.append(d)
+
+    return stims
+                
+
+def find_wave_generators(search_dict):
+    ### recursively search through an info() dict for waveGeneratorWidget key and return a list of values found
+    waves = []
+    for k, v in search_dict.items():
+        if k == 'waveGeneratorWidget':
+            waves.append(v)
+        elif isinstance(v, dict):
+            waves.extend(find_wave_generators(v))
+    return waves
+
+
+        # pulses = parseWaveFunction(wave['function'])
+        # ns = {}
+        # ns.update(units.allUnits)
+        # ns['np'] = np
+        # for p in pulses:
+        #     if p['function'] != 'pulse':
+        #         raise Exception('Parsing functions other than "pulse" is not yet implemented.')
+        #     for a in p['arguments']:
+        #         res = eval(a, ns) ### this will error if a is 'a=0'
+
+
+### Use acq4.util.generator.function_parser.StimGeneratorPulseParser instead.
+# def parseWaveFunction(f):
+#     """Return list of dicts:
+#             [{'function':name, 'arguments':[list of arguments]}]"""
+
+#     f = f.replace('\n','').replace(' ', '').replace('\r','').replace('\r\n','')
+#     res=[]
+
+#     state = 'func'
+
+#     while len(f) > 0:
+#         if state == 'func':
+#             m = re.compile('([a-zA-Z]+\()').match(f)
+#             if m == None:
+#                 raise Exception('Problem')
+#             res.append({'function':m.groups()[0][:-1], 'arguments':[]})
+#             f = f[m.end():]
+#             state = 'args'
+#         elif state == 'args':
+#             depth = 0
+#             args=[]
+#             start_i=0
+#             for i,c in enumerate(f):
+#                 if c not in [',', '(', ')', '[', ']']:
+#                     continue
+#                 elif c in ['(', '[']:
+#                     depth += 1
+#                 elif depth > 0:
+#                     if c == ',':
+#                         continue
+#                     elif c in [')', ']']:
+#                         depth -= 1
+#                     else:
+#                         raise Exception('why am i here?')
+#                 elif depth == 0:
+#                     if c == ',':
+#                         args.append(f[start_i:i])
+#                         start_i = i+1
+#                     elif c == ')':
+#                         args.append(f[start_i:i])
+#                         start_i = i+1
+#                         break
+#                     elif c == ']':
+#                         raise Exception('shouldnt be here...')
+#             res[-1]['arguments']=args
+#             f=f[i+1:]
+#             state = 'separator'
+
+#         elif state == 'separator':
+#             if f[0] == '+':
+#                 f=f[1:]
+#                 state = 'func'
+#             else:
+#                 raise Exception('Not sure how to parse "%s"'%f)
+
+
+#     return res
+
+
 
 ## what's this for?
 #def listWaveGenerator(dh):
